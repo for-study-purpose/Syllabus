@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PDF Library</title>
+
+<style>
+body{
+    font-family: Arial, sans-serif;
+    background:#f4f6f8;
+    margin:40px;
+}
+
+h1{
+    text-align:center;
+}
+
+.container{
+    max-width:700px;
+    margin:auto;
+}
+
+.card{
+    background:white;
+    padding:20px;
+    margin-bottom:15px;
+    border-radius:10px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.1);
+}
+
+button{
+    padding:8px 14px;
+    margin-top:10px;
+    border:none;
+    background:#2563eb;
+    color:white;
+    border-radius:6px;
+    cursor:pointer;
+}
+
+button:hover{
+    background:#1d4ed8;
+}
+
+input{
+    padding:6px;
+    width:80px;
+}
+</style>
+
+</head>
+
+<body>
+
+<h1>📚 PDF Resources</h1>
+
+<div class="container">
+
+<div class="card">
+<h3>3rd Year E&TC Syllabus</h3>
+<input type="number" id="p1" placeholder="Page">
+<button onclick="openPDF('syllabus.pdf','p1')">Open</button>
+</div>
+
+<div class="card">
+<h3>Signals and Systems Notes</h3>
+<input type="number" id="p2" placeholder="Page">
+<button onclick="openPDF('aiml.pdf','p2')">Open</button>
+</div>
+
+<div class="card">
+<h3>Digital Communication</h3>
+<input type="number" id="p3" placeholder="Page">
+<button onclick="openPDF('digital.pdf','p3')">Open</button>
+</div>
+
+</div>
+
+<script>
+
+function openPDF(file,id){
+
+let page = document.getElementById(id).value;
+
+if(page){
+    window.open(file + "#page=" + page, "_blank");
+}
+else{
+    window.open(file, "_blank");
+}
+
+}
+
+</script>
+
+</body>
+</html>

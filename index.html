@@ -6,97 +6,75 @@
 
 <style>
 
-*{
-box-sizing:border-box;
-}
-
 body{
-font-family: "Segoe UI", Arial, sans-serif;
-background: linear-gradient(135deg,#4f46e5,#06b6d4);
-min-height:100vh;
-margin:0;
-padding:40px 20px;
+    font-family: Segoe UI, Arial, sans-serif;
+    background:#0f172a;
+    margin:0;
+    padding:40px;
+    color:#e2e8f0;
 }
 
 h1{
-text-align:center;
-color:white;
-margin-bottom:20px;
-}
-
-.container{
-max-width:750px;
-margin:auto;
+    text-align:center;
+    margin-bottom:25px;
 }
 
 .nav{
-text-align:center;
-margin-bottom:25px;
+    text-align:center;
+    margin-bottom:30px;
 }
 
 .nav button{
-background:white;
-color:#4f46e5;
-font-weight:600;
-padding:10px 18px;
-border-radius:8px;
-border:none;
-cursor:pointer;
-transition:0.2s;
+    background:#3b82f6;
+    border:none;
+    padding:10px 18px;
+    border-radius:6px;
+    color:white;
+    cursor:pointer;
+    font-weight:500;
 }
 
 .nav button:hover{
-transform:scale(1.05);
-box-shadow:0 4px 12px rgba(0,0,0,0.2);
+    background:#2563eb;
+}
+
+.container{
+    max-width:700px;
+    margin:auto;
 }
 
 .card{
-background:rgba(255,255,255,0.9);
-backdrop-filter:blur(10px);
-padding:22px;
-margin-bottom:18px;
-border-radius:12px;
-box-shadow:0 8px 20px rgba(0,0,0,0.15);
-transition:0.2s;
-}
-
-.card:hover{
-transform:translateY(-4px);
-box-shadow:0 12px 25px rgba(0,0,0,0.2);
+    background:#1e293b;
+    padding:20px;
+    margin-bottom:15px;
+    border-radius:8px;
+    border:1px solid #334155;
 }
 
 .card h3{
-margin-top:0;
-color:#111827;
+    margin-top:0;
 }
 
 input{
-padding:8px;
-width:90px;
-border-radius:6px;
-border:1px solid #d1d5db;
-margin-right:10px;
+    padding:6px;
+    width:80px;
+    border-radius:5px;
+    border:1px solid #475569;
+    background:#0f172a;
+    color:white;
 }
 
 button.open{
-padding:8px 16px;
-border:none;
-background:#2563eb;
-color:white;
-border-radius:6px;
-cursor:pointer;
-transition:0.2s;
+    padding:7px 14px;
+    border:none;
+    background:#3b82f6;
+    color:white;
+    border-radius:5px;
+    cursor:pointer;
 }
 
 button.open:hover{
-background:#1d4ed8;
-}
-
-footer{
-text-align:center;
-color:white;
-margin-top:30px;
-font-size:14px;
+    background:#2563eb;
 }
 
 </style>
@@ -108,7 +86,7 @@ font-size:14px;
 <h1>📚 PDF Resources</h1>
 
 <div class="nav">
-<button onclick="window.location.href='pyqs.html'">📄 Open PYQs</button>
+<button onclick="window.location.href='pyqs.html'">📄 PYQs</button>
 </div>
 
 <div class="container">
@@ -124,13 +102,13 @@ font-size:14px;
 <input type="number" id="p2" placeholder="Page">
 <button class="open" onclick="openPDF('syllabus2.pdf','p2')">Open</button>
 </div>
-
+    
 <div class="card">
 <h3>3rd Year E&TC Syllabus</h3>
 <input type="number" id="p3" placeholder="Page">
 <button class="open" onclick="openPDF('syllabus3.pdf','p3')">Open</button>
 </div>
-
+    
 <div class="card">
 <h3>4th Year E&TC Syllabus</h3>
 <input type="number" id="p4" placeholder="Page">
@@ -145,10 +123,6 @@ font-size:14px;
 
 </div>
 
-<footer>
-Study Resources Portal
-</footer>
-
 <script>
 
 function openPDF(file,id){
@@ -156,10 +130,10 @@ function openPDF(file,id){
 let page = document.getElementById(id).value;
 
 if(page){
-window.open(file + "#page=" + page, "_blank");
+    window.open(file + "#page=" + page, "_blank");
 }
 else{
-window.open(file, "_blank");
+    window.open(file, "_blank");
 }
 
 }

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PYQs</title>
+
+<style>
+body{
+    font-family: Arial, sans-serif;
+    background:#f4f6f8;
+    margin:40px;
+}
+
+h1{
+    text-align:center;
+}
+
+.container{
+    max-width:700px;
+    margin:auto;
+}
+
+.card{
+    background:white;
+    padding:20px;
+    margin-bottom:15px;
+    border-radius:10px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.1);
+}
+
+button{
+    padding:8px 14px;
+    margin-top:10px;
+    border:none;
+    background:#2563eb;
+    color:white;
+    border-radius:6px;
+    cursor:pointer;
+}
+
+button:hover{
+    background:#1d4ed8;
+}
+
+input{
+    padding:6px;
+    width:80px;
+}
+
+.back{
+    display:block;
+    margin-bottom:20px;
+}
+</style>
+
+</head>
+
+<body>
+
+<h1>📄 Previous Year Questions</h1>
+
+<div style="text-align:center">
+<button onclick="window.location.href='index.html'">⬅ Back</button>
+</div>
+
+<div class="container">
+
+<div class="card">
+<h3>CN Insem March 23</h3>
+<input type="number" id="pyq1" placeholder="Page">
+<button onclick="openPDF('cellularnetworks/insem/CN-March23.pdf','pyq1')">Open</button>
+</div>
+
+<div class="card">
+<h3>CN Insem March 24</h3>
+<input type="number" id="pyq2" placeholder="Page">
+<button onclick="openPDF('cellularnetworks/insem/CN-March24.pdf','pyq2')">Open</button>
+</div>
+
+<div class="card">
+<h3>PDC Insem March 23</h3>
+<input type="number" id="pyq3" placeholder="Page">
+<button onclick="openPDF('pdc/insem/PDC-March-23.pdf','pyq3')">Open</button>
+</div>
+
+<div class="card">
+<h3>PDC Insem March 24</h3>
+<input type="number" id="pyq4" placeholder="Page">
+<button onclick="openPDF('pdc/insem/PDC-March-24.pdf','pyq4')">Open</button>
+</div>
+
+</div>
+
+<script>
+
+function openPDF(file,id){
+
+let page = document.getElementById(id).value;
+
+if(page){
+    window.open(file + "#page=" + page, "_blank");
+}
+else{
+    window.open(file, "_blank");
+}
+
+}
+
+</script>
+
+</body>
+</html>

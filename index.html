@@ -47,11 +47,9 @@ input{
     width:80px;
 }
 
-.section-title{
-    margin-top:40px;
-    margin-bottom:10px;
-    font-size:22px;
-    font-weight:bold;
+.nav{
+    text-align:center;
+    margin-bottom:20px;
 }
 </style>
 
@@ -60,6 +58,10 @@ input{
 <body>
 
 <h1>📚 PDF Resources</h1>
+
+<div class="nav">
+<button onclick="window.location.href='pyqs.html'">📄 PYQs</button>
+</div>
 
 <div class="container">
 
@@ -71,65 +73,26 @@ input{
 
 <div class="card">
 <h3>2nd Year E&TC Syllabus</h3>
-<input type="number" id="p1" placeholder="Page">
-<button onclick="openPDF('syllabus2.pdf','p1')">Open</button>
+<input type="number" id="p2" placeholder="Page">
+<button onclick="openPDF('syllabus2.pdf','p2')">Open</button>
 </div>
     
 <div class="card">
 <h3>3rd Year E&TC Syllabus</h3>
-<input type="number" id="p1" placeholder="Page">
-<button onclick="openPDF('syllabus3.pdf','p1')">Open</button>
+<input type="number" id="p3" placeholder="Page">
+<button onclick="openPDF('syllabus3.pdf','p3')">Open</button>
 </div>
     
 <div class="card">
 <h3>4th Year E&TC Syllabus</h3>
-<input type="number" id="p1" placeholder="Page">
-<button onclick="openPDF('syllabus4.pdf','p1')">Open</button>
+<input type="number" id="p4" placeholder="Page">
+<button onclick="openPDF('syllabus4.pdf','p4')">Open</button>
 </div>
 
 <div class="card">
 <h3>AIML Honors Syllabus</h3>
-<input type="number" id="p2" placeholder="Page">
-<button onclick="openPDF('aiml.pdf','p2')">Open</button>
-</div>
-
-<div class="card">
-<h3>CN Insem March 23</h3>
-<input type="number" id="p2" placeholder="Page">
-<button onclick="openPDF('cellularnetworks/insem/CN-March23.pdf','p2')">Open</button>
-</div>
-
-<div class="card">
-<h3>CN Insem March 24</h3>
-<input type="number" id="p2" placeholder="Page">
-<button onclick="openPDF('cellularnetworks/insem/CN-March24.pdf','p2')">Open</button>
-</div>
-
-<div class="card">
-<h3>PDC Insem March 23</h3>
-<input type="number" id="p2" placeholder="Page">
-<button onclick="openPDF('pdc/insem/PDC-March-23.pdf','p2')">Open</button>
-</div>
-
-<div class="card">
-<h3>PDC Insem March 24</h3>
-<input type="number" id="p2" placeholder="Page">
-<button onclick="openPDF('pdc/insem/PDC-March-24.pdf','p2')">Open</button>
-</div>
-
-<!-- PYQs Section -->
-<div class="section-title">📄 PYQs</div>
-
-<div class="card">
-<h3>CN Previous Year Questions</h3>
-<input type="number" id="pyq1" placeholder="Page">
-<button onclick="openPDF('cellularnetworks/pyq/CN-PYQ.pdf','pyq1')">Open</button>
-</div>
-
-<div class="card">
-<h3>PDC Previous Year Questions</h3>
-<input type="number" id="pyq2" placeholder="Page">
-<button onclick="openPDF('pdc/pyq/PDC-PYQ.pdf','pyq2')">Open</button>
+<input type="number" id="p5" placeholder="Page">
+<button onclick="openPDF('aiml.pdf','p5')">Open</button>
 </div>
 
 </div>

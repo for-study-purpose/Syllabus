@@ -112,8 +112,22 @@ function rtdbRef(pathname) {
 
 // ─── Google Drive Setup ──────────────────────────────────────────────────────
 const GDRIVE_SERVICE_ACCOUNT_JSON = process.env.GDRIVE_SERVICE_ACCOUNT_JSON
+const GDRIVE_OAUTH_CLIENT_ID = process.env.GDRIVE_OAUTH_CLIENT_ID || ''
+const GDRIVE_OAUTH_CLIENT_SECRET = process.env.GDRIVE_OAUTH_CLIENT_SECRET || ''
+const GDRIVE_OAUTH_REFRESH_TOKEN = process.env.GDRIVE_OAUTH_REFRESH_TOKEN || ''
+const GDRIVE_OAUTH_REDIRECT_URI = process.env.GDRIVE_OAUTH_REDIRECT_URI || 'https://developers.google.com/oauthplayground'
 const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || ''
 const CHUNK_SIZE = 25 * 1024 * 1024 // 25 MiB chunks for 256 MB uploads
+
+function getDriveAuthMode() {
+  if (GDRIVE_OAUTH_CLIENT_ID && GDRIVE_OAUTH_CLIENT_SECRET && GDRIVE_OAUTH_REFRESH_TOKEN) {
+    return 'oauth-user'
+  }
+  if (GDRIVE_SERVICE_ACCOUNT_JSON) {
+    return 'service-account'
+  }
+  throw new Error('Drive auth missing. Set OAuth env vars or GDRIVE_SERVICE_ACCOUNT_JSON.')
+}
 
 function makeServiceAccountAuth() {
   if (!GDRIVE_SERVICE_ACCOUNT_JSON) {
@@ -140,7 +154,28 @@ function makeServiceAccountAuth() {
   })
 }
 
+function makeOAuthUserAuth() {
+  if (!GDRIVE_OAUTH_CLIENT_ID || !GDRIVE_OAUTH_CLIENT_SECRET || !GDRIVE_OAUTH_REFRESH_TOKEN) {
+    throw new Error('GDRIVE_OAUTH_CLIENT_ID, GDRIVE_OAUTH_CLIENT_SECRET, and GDRIVE_OAUTH_REFRESH_TOKEN are required for OAuth user mode.')
+  }
+
+  const client = new google.auth.OAuth2(
+    GDRIVE_OAUTH_CLIENT_ID,
+    GDRIVE_OAUTH_CLIENT_SECRET,
+    GDRIVE_OAUTH_REDIRECT_URI
+  )
+  client.setCredentials({ refresh_token: GDRIVE_OAUTH_REFRESH_TOKEN })
+  return client
+}
+
 async function getDriveAuth() {
+  const mode = getDriveAuthMode()
+  if (mode === 'oauth-user') {
+    const oauth = makeOAuthUserAuth()
+    await oauth.getAccessToken()
+    return oauth
+  }
+
   const svc = makeServiceAccountAuth()
   await svc.getAccessToken()
   return svc

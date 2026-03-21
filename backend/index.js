@@ -131,6 +131,19 @@ async function getBearerToken(auth) {
   return typeof at === 'string' ? at : (at?.token || at)
 }
 
+function isDriveNotFoundError(err) {
+  const code = Number(err?.code || err?.status || 0)
+  return code === 404
+}
+
+function isDrivePermissionError(err) {
+  const code = Number(err?.code || err?.status || 0)
+  if (code === 401 || code === 403) return true
+
+  const msg = String(err?.message || '').toLowerCase()
+  return msg.includes('insufficient permissions') || msg.includes('permission')
+}
+
 function getBearerTokenFromRequest(req) {
   const raw = req.headers.authorization || ''
   if (!raw.startsWith('Bearer ')) return null
@@ -429,14 +442,26 @@ app.delete('/api/file/:fileId', async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to delete this file.' })
     }
 
+    let deletedFromDrive = true
+    let driveDeleteWarning = ''
     try {
       await drive.files.delete({ fileId, supportsAllDrives: true })
     } catch (driveErr) {
-      if (driveErr.code !== 404) throw driveErr
+      if (isDriveNotFoundError(driveErr)) {
+        deletedFromDrive = false
+        driveDeleteWarning = 'File was already missing on Drive.'
+      } else if (isDrivePermissionError(driveErr)) {
+        // Some legacy files may be owned outside service account scope.
+        deletedFromDrive = false
+        driveDeleteWarning = 'File could not be removed from Drive due to insufficient permissions.'
+        console.warn('Drive permission denied during user delete:', driveErr?.message || driveErr)
+      } else {
+        throw driveErr
+      }
     }
 
     await submissionRef.remove()
-    res.json({ success: true })
+    res.json({ success: true, deletedFromDrive, driveDeleteWarning })
   } catch (err) {
     console.error('deleteFile error:', err.message)
     res.status(500).json({ error: err.message || 'Delete failed' })
@@ -594,20 +619,39 @@ app.delete('/api/admin/submission/:submissionId', async (req, res) => {
     const { fileId } = data
 
     // Delete from Google Drive
+    let deletedFromDrive = true
+    let driveDeleteWarning = ''
     if (fileId) {
       const auth = await getDriveAuth()
       const drive = google.drive({ version: 'v3', auth })
       try {
         await drive.files.delete({ fileId, supportsAllDrives: true })
       } catch (driveErr) {
-        if (driveErr.code !== 404) throw driveErr
+        if (isDriveNotFoundError(driveErr)) {
+          deletedFromDrive = false
+          driveDeleteWarning = 'File was already missing on Drive.'
+        } else if (isDrivePermissionError(driveErr)) {
+          // Keep moderation usable even if a legacy file is not deletable by service account.
+          deletedFromDrive = false
+          driveDeleteWarning = 'File could not be removed from Drive due to insufficient permissions.'
+          console.warn('Drive permission denied during admin delete:', driveErr?.message || driveErr)
+        } else {
+          throw driveErr
+        }
       }
     }
 
     // Delete from Realtime Database
     await submissionRef.remove()
 
-    res.json({ success: true, message: 'Submission deleted' })
+    res.json({
+      success: true,
+      message: deletedFromDrive
+        ? 'Submission deleted'
+        : 'Submission removed from database with Drive delete warning',
+      deletedFromDrive,
+      driveDeleteWarning,
+    })
   } catch (err) {
     console.error('deleteSubmission error:', err)
     res.status(500).json({ error: err.message || 'Delete failed' })

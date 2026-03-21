@@ -7,7 +7,7 @@ import { apiRequest } from '@/services/apiClient'
  * @param {Array<[string, string, any]>} filters – array of [field, op, value] tuples
  * @returns {{ docs: Array, loading: boolean, error: boolean }}
  */
-export function useFirestoreQuery(col, filters = []) {
+export function useApiQuery(col, filters = []) {
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)

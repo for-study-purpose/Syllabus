@@ -3,7 +3,15 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.env.backup
 firebase-key.json
 dist/
 *.log
 .DS_Store
+
+# Service account credentials (NEVER commit these!)
+*-adminsdk-*.json
+*firebase*.json
+*gdrive*.json
+dna-gdrive-*.json
+dnyaneshagale-*.json

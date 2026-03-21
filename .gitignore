@@ -13,7 +13,7 @@ frontend/.firebase/
 .env
 .env.local
 .env.*.local
-
+backend/scripts
 # IDE & Editor
 .vscode/
 .idea/
@@ -30,3 +30,6 @@ frontend/.firebase/
 # Development
 npm-debug.log
 yarn-error.log
+
+# Local scripts directory — may contain sensitive data
+script/

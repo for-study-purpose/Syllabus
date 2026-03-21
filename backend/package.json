@@ -4,8 +4,9 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "dev": "node index.js",
-    "start": "node index.js"
+    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "cleanup": "node scripts/cleanup-sessions.js"
   },
   "dependencies": {
     "express": "^4.18.2",

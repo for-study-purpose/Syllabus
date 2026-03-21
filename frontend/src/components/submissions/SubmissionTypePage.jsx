@@ -4,7 +4,7 @@ import { signOut } from 'firebase/auth'
 import { getViewUrl } from '@/services/storage'
 import { SUBJECT_META, ACCENT_ACTIVE, SEMESTER_ORDER } from '@/constants/subjects'
 import { capitalize } from '@/utils/format'
-import { useFirestoreQuery } from '@/hooks/useFirestoreQuery'
+import { useApiQuery } from '@/hooks/useApiQuery'
 import useAuthUser from '@/hooks/useAuthUser'
 import { apiRequest } from '@/services/apiClient'
 import Layout from '@/components/layout/Layout'
@@ -83,7 +83,7 @@ export default function SubmissionTypePage({ type, title, label, subtitle }) {
     }
   }, [user?.uid])
 
-  const { docs, loading, error: fbError } = useFirestoreQuery('submissions', [
+  const { docs, loading, error: fbError } = useApiQuery('submissions', [
     ['type', '==', type],
     ['status', '==', 'approved'],
   ])

@@ -15,8 +15,3 @@ export async function ensureMemberProfile(user, preferredName = '') {
   })
   return data.profile || null
 }
-
-export async function getMemberProfile(uid) {
-  void uid
-  return null
-}

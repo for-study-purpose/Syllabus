@@ -3,8 +3,6 @@
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
-const fs = require('fs')
-const path = require('path')
 const { initializeApp, cert } = require('firebase-admin/app')
 const { getAuth } = require('firebase-admin/auth')
 const { getDatabase } = require('firebase-admin/database')
@@ -38,13 +36,9 @@ app.use(express.raw({ type: 'application/octet-stream', limit: '256mb' }))
 // ─── Firebase Setup ─────────────────────────────────────────────────────────
 function normalizeServiceAccount(raw) {
   const data = { ...(raw || {}) }
-
-  // Accept both snake_case and camelCase key names from copied JSON variants.
   if (!data.private_key && typeof data.privateKey === 'string') {
     data.private_key = data.privateKey
   }
-
-  // Env-based JSON often stores PEM with escaped newlines; convert them.
   if (typeof data.private_key === 'string') {
     data.private_key = data.private_key
       .replace(/^"|"$/g, '')
@@ -53,44 +47,16 @@ function normalizeServiceAccount(raw) {
       .replace(/\\n/g, '\n')
       .trim()
   }
-
   if (typeof data.client_email === 'string') {
     data.client_email = data.client_email.trim()
   }
-
   return data
 }
 
 function loadFirebaseServiceAccount() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-  if (raw) {
-    try {
-      return normalizeServiceAccount(JSON.parse(raw))
-    } catch (error) {
-      console.warn('Invalid FIREBASE_SERVICE_ACCOUNT_JSON. Falling back to local key file.')
-    }
-  }
-
-  const fromPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
-  if (fromPath && fs.existsSync(fromPath)) {
-    return normalizeServiceAccount(JSON.parse(fs.readFileSync(fromPath, 'utf8')))
-  }
-
-  const localDefault = path.join(__dirname, 'firebase-key.json')
-  if (fs.existsSync(localDefault)) {
-    return normalizeServiceAccount(JSON.parse(fs.readFileSync(localDefault, 'utf8')))
-  }
-
-  const detected = fs
-    .readdirSync(__dirname)
-    .find(file => file.endsWith('.json') && file.includes('firebase-adminsdk'))
-
-  if (detected) {
-    const filePath = path.join(__dirname, detected)
-    return normalizeServiceAccount(JSON.parse(fs.readFileSync(filePath, 'utf8')))
-  }
-
-  throw new Error('Firebase service account key not found. Set FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH.')
+  const raw = (process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim()
+  if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is required.')
+  return normalizeServiceAccount(JSON.parse(raw))
 }
 
 const serviceAccountJson = loadFirebaseServiceAccount()
@@ -110,80 +76,50 @@ function rtdbRef(pathname) {
   return realtimeDb.ref(pathname)
 }
 
-// ─── Google Drive Setup ──────────────────────────────────────────────────────
-const GDRIVE_SERVICE_ACCOUNT_JSON = process.env.GDRIVE_SERVICE_ACCOUNT_JSON
+// ─── Google Drive Setup ─────────────────────────────────────────────────────
+// HYBRID AUTH: OAuth for uploads/deletes (personal Gmail quota),
+//              service account for reads and permissions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || ''
+const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE_MB || 256) * 1024 * 1024
+const CHUNK_SIZE = Number(process.env.MAX_CHUNK_SIZE_MB || 25) * 1024 * 1024
+
+// Service Account — reads, permissions
+function initServiceAccountAuth() {
+  const raw = (process.env.GDRIVE_SERVICE_ACCOUNT_JSON || '').trim()
+  if (!raw) throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is required.')
+  let credentials
+  try { credentials = normalizeServiceAccount(JSON.parse(raw)) }
+  catch { throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is not valid JSON.') }
+  if (!credentials.private_key || !credentials.client_email) {
+    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON must include private_key and client_email.')
+  }
+  return new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/drive'] })
+}
+const serviceAuth = initServiceAccountAuth()
+const driveClient = google.drive({ version: 'v3', auth: serviceAuth })
+
+// OAuth — uploads, deletes (quota charged to personal Gmail)
 const GDRIVE_OAUTH_CLIENT_ID = process.env.GDRIVE_OAUTH_CLIENT_ID || ''
 const GDRIVE_OAUTH_CLIENT_SECRET = process.env.GDRIVE_OAUTH_CLIENT_SECRET || ''
 const GDRIVE_OAUTH_REFRESH_TOKEN = process.env.GDRIVE_OAUTH_REFRESH_TOKEN || ''
 const GDRIVE_OAUTH_REDIRECT_URI = process.env.GDRIVE_OAUTH_REDIRECT_URI || 'https://developers.google.com/oauthplayground'
-const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || ''
-const CHUNK_SIZE = 25 * 1024 * 1024 // 25 MiB chunks for 256 MB uploads
 
-function getDriveAuthMode() {
-  if (GDRIVE_OAUTH_CLIENT_ID && GDRIVE_OAUTH_CLIENT_SECRET && GDRIVE_OAUTH_REFRESH_TOKEN) {
-    return 'oauth-user'
-  }
-  if (GDRIVE_SERVICE_ACCOUNT_JSON) {
-    return 'service-account'
-  }
-  throw new Error('Drive auth missing. Set OAuth env vars or GDRIVE_SERVICE_ACCOUNT_JSON.')
-}
-
-function makeServiceAccountAuth() {
-  if (!GDRIVE_SERVICE_ACCOUNT_JSON) {
-    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is required for Google Drive access.')
-  }
-  const raw = GDRIVE_SERVICE_ACCOUNT_JSON.trim()
-  if (!raw) {
-    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is empty.')
-  }
-  let credentials
-  try {
-    credentials = normalizeServiceAccount(JSON.parse(raw))
-  } catch {
-    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is not valid JSON.')
-  }
-
-  if (!credentials.private_key || !credentials.client_email) {
-    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON must include private_key and client_email.')
-  }
-
-  return new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/drive'],
-  })
-}
-
-function makeOAuthUserAuth() {
+function initUploadAuth() {
   if (!GDRIVE_OAUTH_CLIENT_ID || !GDRIVE_OAUTH_CLIENT_SECRET || !GDRIVE_OAUTH_REFRESH_TOKEN) {
-    throw new Error('GDRIVE_OAUTH_CLIENT_ID, GDRIVE_OAUTH_CLIENT_SECRET, and GDRIVE_OAUTH_REFRESH_TOKEN are required for OAuth user mode.')
+    throw new Error('GDRIVE_OAUTH_* credentials required. Service accounts have zero quota on personal Gmail.')
   }
-
-  const client = new google.auth.OAuth2(
-    GDRIVE_OAUTH_CLIENT_ID,
-    GDRIVE_OAUTH_CLIENT_SECRET,
-    GDRIVE_OAUTH_REDIRECT_URI
-  )
+  const client = new google.auth.OAuth2(GDRIVE_OAUTH_CLIENT_ID, GDRIVE_OAUTH_CLIENT_SECRET, GDRIVE_OAUTH_REDIRECT_URI)
   client.setCredentials({ refresh_token: GDRIVE_OAUTH_REFRESH_TOKEN })
   return client
 }
+const uploadAuth = initUploadAuth()
+const uploadDriveClient = google.drive({ version: 'v3', auth: uploadAuth })
 
-async function getDriveAuth() {
-  const mode = getDriveAuthMode()
-  if (mode === 'oauth-user') {
-    const oauth = makeOAuthUserAuth()
-    await oauth.getAccessToken()
-    return oauth
-  }
-
-  const svc = makeServiceAccountAuth()
-  await svc.getAccessToken()
-  return svc
-}
-
-async function getBearerToken(auth) {
-  const at = await auth.getAccessToken()
-  return typeof at === 'string' ? at : (at?.token || at)
+async function getUploadBearerToken() {
+  const { token } = await uploadAuth.getAccessToken()
+  return token
 }
 
 function isDriveNotFoundError(err) {
@@ -305,14 +241,48 @@ app.post('/api/upload/init', async (req, res) => {
     if (!memberContext) return
 
     const { fileName, mimeType, fileSize, category, type, title, description,
-            subject, unit, uploaderName, fileType, displayNameOnSite } = req.body
+      subject, unit, uploaderName, fileType, displayNameOnSite } = req.body
 
     if (!fileName || !fileSize) {
       return res.status(400).json({ error: 'fileName and fileSize required' })
     }
 
-    const auth = await getDriveAuth()
-    const token = await getBearerToken(auth)
+    // Validate file size
+    const fileSizeNum = Number(fileSize)
+    if (isNaN(fileSizeNum) || fileSizeNum <= 0) {
+      return res.status(400).json({ error: 'Invalid file size' })
+    }
+    if (fileSizeNum > MAX_FILE_SIZE) {
+      return res.status(400).json({
+        error: `File size exceeds maximum allowed size of ${MAX_FILE_SIZE / (1024 * 1024)}MB`
+      })
+    }
+
+    // Validate file name
+    const sanitizedFileName = String(fileName).trim()
+    if (!sanitizedFileName || sanitizedFileName.length > 255) {
+      return res.status(400).json({ error: 'Invalid file name' })
+    }
+
+    // Validate MIME type
+    const allowedMimeTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'video/mp4',
+      'application/octet-stream'
+    ]
+    const requestedMimeType = mimeType || 'application/octet-stream'
+    if (!allowedMimeTypes.includes(requestedMimeType)) {
+      return res.status(400).json({ error: 'File type not allowed' })
+    }
+
+    if (!DRIVE_FOLDER_ID) {
+      return res.status(500).json({ error: 'DRIVE_FOLDER_ID missing' })
+    }
+
+    const token = await getUploadBearerToken()
 
     const initRes = await fetch(
       'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true',
@@ -331,7 +301,11 @@ app.post('/api/upload/init', async (req, res) => {
     if (!initRes.ok) {
       const err = await initRes.text()
       console.error('Drive resumable init failed:', initRes.status, err)
-      return res.status(500).json({ error: 'Failed to create upload session' })
+      const looksLikeQuota = /storagequotaexceeded/i.test(err)
+      const message = looksLikeQuota
+        ? 'Google Drive quota error. Ensure DRIVE_FOLDER_ID points to a folder shared with the service account.'
+        : 'Failed to create upload session'
+      return res.status(500).json({ error: message, driveStatus: initRes.status })
     }
 
     const resumableUri = initRes.headers.get('location')
@@ -340,21 +314,22 @@ app.post('/api/upload/init', async (req, res) => {
     const sessionRef = rtdbRef('uploadSessions').push()
     await sessionRef.set({
       resumableUri,
-      fileName,
-      mimeType: mimeType || 'application/octet-stream',
-      fileSize: Number(fileSize),
+      fileName: sanitizedFileName,
+      mimeType: requestedMimeType,
+      fileSize: fileSizeNum,
       category: (category || 'submission').toLowerCase(),
       type: (type || 'other').toLowerCase(),
-      title: (title || '').trim(),
-      description: (description || '').trim(),
-      subject: (subject || '').trim(),
-      unit: (unit || '').trim(),
+      title: (title || '').trim().slice(0, 200),
+      description: (description || '').trim().slice(0, 1000),
+      subject: (subject || '').trim().slice(0, 100),
+      unit: (unit || '').trim().slice(0, 50),
       uploaderUid: memberContext.decoded.uid,
       uploaderEmail: memberContext.decoded.email || '',
-      uploaderName: resolvedUploaderName,
+      uploaderName: resolvedUploaderName.slice(0, 100),
       fileType: fileType || 'pdf',
       displayNameOnSite: Boolean(displayNameOnSite),
       createdAt: nowTs(),
+      expiresAt: nowTs() + (24 * 60 * 60 * 1000), // 24 hours
     })
 
     res.json({ sessionId: sessionRef.key, chunkSize: CHUNK_SIZE })
@@ -380,20 +355,62 @@ app.post('/api/upload/chunk', async (req, res) => {
       return res.status(400).json({ error: 'Missing query: sessionId, start, end, total' })
     }
 
+    // Validate query parameters
+    const startNum = Number(start)
+    const endNum = Number(end)
+    const totalNum = Number(total)
+
+    if (isNaN(startNum) || isNaN(endNum) || isNaN(totalNum)) {
+      return res.status(400).json({ error: 'Invalid numeric parameters' })
+    }
+
+    if (startNum < 0 || endNum < startNum || totalNum <= 0) {
+      return res.status(400).json({ error: 'Invalid byte range' })
+    }
+
+    if (totalNum > MAX_FILE_SIZE) {
+      return res.status(400).json({ error: 'Total file size exceeds maximum allowed' })
+    }
+
     const sessionSnap = await rtdbRef(`uploadSessions/${sessionId}`).get()
     if (!sessionSnap.exists()) {
       return res.status(404).json({ error: 'Session not found' })
     }
 
     const session = sessionSnap.val()
+
+    // Check session expiration
+    if (session.expiresAt && nowTs() > session.expiresAt) {
+      await rtdbRef(`uploadSessions/${sessionId}`).remove()
+      return res.status(410).json({ error: 'Upload session expired' })
+    }
+
+    // Verify ownership
     if (session.uploaderUid && session.uploaderUid !== memberContext.decoded.uid) {
       return res.status(403).json({ error: 'This upload session belongs to another user.' })
+    }
+
+    // Verify total size matches session
+    if (session.fileSize && totalNum !== session.fileSize) {
+      return res.status(400).json({ error: 'Total size mismatch with session' })
     }
 
     const chunkData = req.body
 
     if (!chunkData || chunkData.length === 0) {
       return res.status(400).json({ error: 'Empty chunk' })
+    }
+
+    // Validate chunk size
+    const expectedChunkSize = endNum - startNum + 1
+    if (chunkData.length !== expectedChunkSize) {
+      return res.status(400).json({
+        error: `Chunk size mismatch. Expected ${expectedChunkSize}, got ${chunkData.length}`
+      })
+    }
+
+    if (chunkData.length > CHUNK_SIZE * 1.1) { // Allow 10% overhead
+      return res.status(400).json({ error: 'Chunk size exceeds maximum allowed' })
     }
 
     // Forward chunk to Drive resumable URI
@@ -418,9 +435,7 @@ app.post('/api/upload/chunk', async (req, res) => {
       const fileSize = Number(driveData.size) || 0
 
       // Make publicly readable
-      const auth = await getDriveAuth()
-      const drive = google.drive({ version: 'v3', auth })
-      await drive.permissions.create({
+      await driveClient.permissions.create({
         fileId,
         supportsAllDrives: true,
         requestBody: { role: 'reader', type: 'anyone' },
@@ -481,9 +496,6 @@ app.delete('/api/file/:fileId', async (req, res) => {
     if (!fileId) return res.status(400).json({ error: 'fileId required' })
     if (!docId) return res.status(400).json({ error: 'docId required' })
 
-    const auth = await getDriveAuth()
-    const drive = google.drive({ version: 'v3', auth })
-
     const submissionRef = rtdbRef(`submissions/${docId}`)
     const submissionSnap = await submissionRef.get()
     if (!submissionSnap.exists()) {
@@ -500,7 +512,7 @@ app.delete('/api/file/:fileId', async (req, res) => {
     let deletedFromDrive = true
     let driveDeleteWarning = ''
     try {
-      await drive.files.delete({ fileId, supportsAllDrives: true })
+      await uploadDriveClient.files.delete({ fileId, supportsAllDrives: true })
     } catch (driveErr) {
       if (isDriveNotFoundError(driveErr)) {
         deletedFromDrive = false
@@ -677,10 +689,8 @@ app.delete('/api/admin/submission/:submissionId', async (req, res) => {
     let deletedFromDrive = true
     let driveDeleteWarning = ''
     if (fileId) {
-      const auth = await getDriveAuth()
-      const drive = google.drive({ version: 'v3', auth })
       try {
-        await drive.files.delete({ fileId, supportsAllDrives: true })
+        await uploadDriveClient.files.delete({ fileId, supportsAllDrives: true })
       } catch (driveErr) {
         if (isDriveNotFoundError(driveErr)) {
           deletedFromDrive = false
@@ -802,39 +812,24 @@ app.put('/api/admin/submission/:submissionId', async (req, res) => {
  */
 app.get('/api/health', async (req, res) => {
   try {
-    const auth = await getDriveAuth()
-    const drive = google.drive({ version: 'v3', auth })
-
     if (!DRIVE_FOLDER_ID) {
       return res.status(500).json({ ok: false, error: 'DRIVE_FOLDER_ID missing' })
     }
 
-    await drive.files.get({
-      fileId: DRIVE_FOLDER_ID,
-      supportsAllDrives: true,
-      fields: 'id,name',
-    })
+    await driveClient.files.get({ fileId: DRIVE_FOLDER_ID, supportsAllDrives: true, fields: 'id,name' })
 
-    // Validate upload capability
-    const test = await drive.files.create({
-      requestBody: {
-        name: `health-${Date.now()}.txt`,
-        parents: [DRIVE_FOLDER_ID],
-        mimeType: 'text/plain',
-      },
-      media: {
-        mimeType: 'text/plain',
-        body: 'ok',
-      },
+    const test = await uploadDriveClient.files.create({
+      requestBody: { name: `health-${Date.now()}.txt`, parents: [DRIVE_FOLDER_ID], mimeType: 'text/plain' },
+      media: { mimeType: 'text/plain', body: 'ok' },
       fields: 'id',
       supportsAllDrives: true,
     })
 
     if (test?.data?.id) {
-      await drive.files.delete({ fileId: test.data.id, supportsAllDrives: true })
+      await uploadDriveClient.files.delete({ fileId: test.data.id, supportsAllDrives: true })
     }
 
-    return res.json({ ok: true, backend: 'running' })
+    return res.json({ ok: true, backend: 'running', auth: 'hybrid' })
   } catch (err) {
     return res.status(503).json({ ok: false, error: String(err?.message || err) })
   }
@@ -999,9 +994,35 @@ app.use((err, req, res, next) => {
 
 // ─── Start Server ───────────────────────────────────────────────────────────
 
+// Clean up expired upload sessions periodically
+setInterval(async () => {
+  try {
+    const sessionsSnap = await rtdbRef('uploadSessions').get()
+    if (!sessionsSnap.exists()) return
+
+    const sessions = sessionsSnap.val()
+    const now = nowTs()
+    let cleanedCount = 0
+
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      if (session.expiresAt && now > session.expiresAt) {
+        await rtdbRef(`uploadSessions/${sessionId}`).remove()
+        cleanedCount++
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(`🧹 Cleaned up ${cleanedCount} expired upload sessions`)
+    }
+  } catch (err) {
+    console.error('Session cleanup error:', err)
+  }
+}, 60 * 60 * 1000) // Run every hour
+
 app.listen(PORT, () => {
   console.log(`🚀 Backend running at http://localhost:${PORT}`)
   console.log(`📚 API docs at http://localhost:${PORT}/api`)
+  console.log('🔐 Drive auth: hybrid (OAuth uploads + service-account management)')
 })
 
 module.exports = app

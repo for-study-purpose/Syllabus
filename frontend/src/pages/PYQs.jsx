@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { signOut } from 'firebase/auth'
 import { getViewUrl } from '@/services/storage'
 import { SUBJECT_META, ACCENT_ACTIVE } from '@/constants/subjects'
-import { useFirestoreQuery } from '@/hooks/useFirestoreQuery'
+import { useApiQuery } from '@/hooks/useApiQuery'
 import useAuthUser from '@/hooks/useAuthUser'
 import { apiRequest } from '@/services/apiClient'
 import Layout from '@/components/layout/Layout'
@@ -64,8 +64,8 @@ export default function PYQs() {
   }
 
   // Static PYQs from RTDB
-  const { docs: staticDocs } = useFirestoreQuery('staticFiles', [['category', '==', 'pyq']])
-  const { docs: community } = useFirestoreQuery('submissions', [
+  const { docs: staticDocs } = useApiQuery('staticFiles', [['category', '==', 'pyq']])
+  const { docs: community } = useApiQuery('submissions', [
     ['category', '==', 'pyq'],
     ['status', '==', 'approved'],
   ])

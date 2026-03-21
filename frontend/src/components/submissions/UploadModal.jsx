@@ -18,6 +18,41 @@ function makeFileKey(file) {
   return `${file.name}-${file.size}-${file.lastModified}`
 }
 
+function uploadChunkWithProgress({ url, chunk, idToken, onProgress }) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.setRequestHeader('Authorization', `Bearer ${idToken}`)
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(event.loaded, event.total)
+      }
+    }
+
+    xhr.onerror = () => reject(new Error('Network error during chunk upload'))
+
+    xhr.onload = () => {
+      let parsed = null
+      try {
+        parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null
+      } catch {
+        parsed = null
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(parsed || {})
+        return
+      }
+
+      reject(new Error(parsed?.error || `Chunk upload failed (${xhr.status})`))
+    }
+
+    xhr.send(chunk)
+  })
+}
+
 export default function UploadModal({ onClose, onSuccess, type = 'assignment', authUser, memberProfile }) {
   const resolvedName = (memberProfile?.fullName || authUser?.displayName || authUser?.email || '').trim()
   const initFormData = type === 'other'
@@ -42,6 +77,7 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
 
   const totalBytes = progressEntries.reduce((sum, item) => sum + (item.totalBytes || 0), 0)
   const totalUploadedBytes = progressEntries.reduce((sum, item) => sum + (item.uploadedBytes || 0), 0)
+  const totalSpeedBytesPerSecond = progressEntries.reduce((sum, item) => sum + (item.speedBytesPerSecond || 0), 0)
   const uploadProgress = totalBytes ? Math.min(100, Math.round((totalUploadedBytes / totalBytes) * 100)) : 0
   const hasActiveUploads = progressEntries.some(item => item.status === 'queued' || item.status === 'uploading')
   const activeUploadCount = progressEntries.filter(item => item.status === 'queued' || item.status === 'uploading').length
@@ -189,42 +225,62 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
 
     const { sessionId, chunkSize } = await initRes.json()
     const totalChunks = Math.ceil(file.size / chunkSize)
-    const startedAt = Date.now()
+    let lastUploadedBytes = 0
+    let lastSpeedTick = performance.now()
+    let smoothedSpeed = 0
+    let lastUiTick = 0
 
     for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
       const start = chunkIndex * chunkSize
       const end = Math.min(start + chunkSize, file.size)
       const chunk = file.slice(start, end)
 
-      const chunkRes = await fetch(
-        `${apiBase}/upload/chunk?sessionId=${sessionId}&start=${start}&end=${end - 1}&total=${file.size}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/octet-stream',
-            Authorization: `Bearer ${idToken}`,
-          },
-          body: chunk,
-        }
-      )
+      await uploadChunkWithProgress({
+        url: `${apiBase}/upload/chunk?sessionId=${sessionId}&start=${start}&end=${end - 1}&total=${file.size}`,
+        chunk,
+        idToken,
+        onProgress: (loaded) => {
+          const uploadedBytes = Math.min(file.size, start + loaded)
+          const now = performance.now()
 
-      if (!chunkRes.ok) {
-        const errData = await chunkRes.json()
-        throw new Error(errData.error || `Chunk upload failed for ${file.name}`)
-      }
+          const deltaBytes = Math.max(0, uploadedBytes - lastUploadedBytes)
+          const deltaMs = Math.max(1, now - lastSpeedTick)
+          const instantSpeed = (deltaBytes * 1000) / deltaMs
+          smoothedSpeed = smoothedSpeed === 0
+            ? instantSpeed
+            : (smoothedSpeed * 0.75) + (instantSpeed * 0.25)
 
+          lastUploadedBytes = uploadedBytes
+          lastSpeedTick = now
+
+          // Keep UI updates near real-time while avoiding an excessive render storm.
+          if ((now - lastUiTick) < 16 && loaded < chunk.size) return
+          lastUiTick = now
+
+          const progress = Math.min(100, Math.round((uploadedBytes / file.size) * 100))
+          setFileProgressMap(prev => ({
+            ...prev,
+            [key]: {
+              uploadedBytes,
+              totalBytes: file.size,
+              progress,
+              speedBytesPerSecond: smoothedSpeed,
+              status: 'uploading',
+            },
+          }))
+        },
+      })
+
+      // Ensure final byte/state sync for this chunk completion.
       const uploadedBytes = end
-      const elapsedSeconds = Math.max(1, (Date.now() - startedAt) / 1000)
-      const speedBytesPerSecond = uploadedBytes / elapsedSeconds
       const progress = Math.min(100, Math.round((uploadedBytes / file.size) * 100))
-
       setFileProgressMap(prev => ({
         ...prev,
         [key]: {
           uploadedBytes,
           totalBytes: file.size,
           progress,
-          speedBytesPerSecond,
+          speedBytesPerSecond: smoothedSpeed,
           status: 'uploading',
         },
       }))
@@ -370,7 +426,9 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
-            <p className="text-[11px] text-slate-500">Overall {uploadProgress}%</p>
+            <p className="text-[11px] text-slate-500">
+              Overall {uploadProgress}%{totalSpeedBytesPerSecond > 0 ? `  |  ${getFileSizeLabel(Math.round(totalSpeedBytesPerSecond))}/s` : ''}
+            </p>
           </div>
         )}
 

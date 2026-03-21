@@ -105,59 +105,6 @@ const GDRIVE_SERVICE_ACCOUNT_JSON = process.env.GDRIVE_SERVICE_ACCOUNT_JSON
 const DRIVE_FOLDER_ID = process.env.DRIVE_FOLDER_ID || ''
 const CHUNK_SIZE = 25 * 1024 * 1024 // 25 MiB chunks for 256 MB uploads
 
-function parseJsonFromAny(raw, sourceName) {
-  const text = String(raw || '').trim()
-  if (!text) return null
-
-  // Standard case: JSON object string in env.
-  if (text.startsWith('{')) {
-    return JSON.parse(text)
-  }
-
-  // Allow env indirection: GDRIVE_SERVICE_ACCOUNT_JSON=GOOGLE_SERVICE_ACCOUNT_JSON
-  if (process.env[text]) {
-    return parseJsonFromAny(process.env[text], text)
-  }
-
-  // Allow passing a file path in env.
-  if (fs.existsSync(text)) {
-    return JSON.parse(fs.readFileSync(text, 'utf8'))
-  }
-
-  // Allow base64-encoded JSON payload.
-  try {
-    const decoded = Buffer.from(text, 'base64').toString('utf8').trim()
-    if (decoded.startsWith('{')) {
-      return JSON.parse(decoded)
-    }
-  } catch {
-    // ignore and throw below with a clearer message
-  }
-
-  throw new Error(
-    `${sourceName} must be a JSON string, base64 JSON, file path, or env-var name pointing to JSON.`
-  )
-}
-
-function normalizeGoogleServiceAccount(raw) {
-  const data = { ...(raw || {}) }
-
-  if (typeof data.private_key === 'string') {
-    // Handle escaped newlines and accidental surrounding quotes from env providers.
-    data.private_key = data.private_key
-      .replace(/^"|"$/g, '')
-      .replace(/^'|'$/g, '')
-      .replace(/\\n/g, '\n')
-      .trim()
-  }
-
-  if (typeof data.client_email === 'string') {
-    data.client_email = data.client_email.trim()
-  }
-
-  return data
-}
-
 function makeServiceAccountAuth() {
   if (!GDRIVE_SERVICE_ACCOUNT_JSON) {
     throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is required for Google Drive access.')
@@ -166,9 +113,7 @@ function makeServiceAccountAuth() {
   if (!raw) {
     throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is empty.')
   }
-  const credentials = normalizeGoogleServiceAccount(
-    parseJsonFromAny(raw, 'GDRIVE_SERVICE_ACCOUNT_JSON')
-  )
+  const credentials = JSON.parse(raw)
   return new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/drive'],

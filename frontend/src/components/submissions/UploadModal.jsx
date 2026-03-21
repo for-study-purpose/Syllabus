@@ -65,6 +65,7 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
   const [error, setError] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [showUploadLockToast, setShowUploadLockToast] = useState(false)
+  const [showSuccess, setShowSuccess] = useState(false)
 
   useEffect(() => {
     if (!resolvedName) return
@@ -386,10 +387,24 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
       }
 
       setFormData(prev => ({ ...prev, title: '', unit: '' }))
-      onSuccess?.()
+      setShowSuccess(true)
     } catch (err) {
       setError(err.message || 'Upload failed. Please try again.')
     }
+  }
+
+  function handleSubmitMore() {
+    setShowSuccess(false)
+    setFormData(prev => ({ ...prev, title: '', unit: '' }))
+    setFiles([])
+    setFileProgressMap({})
+    setError('')
+  }
+
+  function handleDone() {
+    setShowSuccess(false)
+    onSuccess?.()
+    onClose()
   }
 
   return (
@@ -691,6 +706,35 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
         {showUploadLockToast && (
           <div className="absolute left-1/2 -translate-x-1/2 bottom-16 sm:bottom-20 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs shadow-lg animate-fade-in pointer-events-none">
             Background upload running. Please wait for uploads to finish.
+          </div>
+        )}
+
+        {/* Success Popup */}
+        {showSuccess && (
+          <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm flex flex-col items-center justify-center px-6 z-10 animate-fade-in">
+            <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mb-5">
+              <svg className="w-8 h-8 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-bold text-white mb-2">Submitted Successfully!</h3>
+            <p className="text-sm text-slate-400 text-center leading-relaxed max-w-xs">
+              Once the system reviews your submission, it will be live on the site shortly — usually within <span className="text-slate-200 font-medium">5 minutes</span>.
+            </p>
+            <div className="flex gap-3 mt-8 w-full max-w-xs">
+              <button
+                onClick={handleDone}
+                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-lg text-sm font-semibold hover:bg-slate-700 transition-colors"
+              >
+                Done
+              </button>
+              <button
+                onClick={handleSubmitMore}
+                className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-semibold transition-colors"
+              >
+                Submit More
+              </button>
+            </div>
           </div>
         )}
       </div>

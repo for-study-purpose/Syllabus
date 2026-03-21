@@ -1,0 +1,9 @@
+# Backend - Node files to ignore
+node_modules/
+.env
+.env.local
+.env.*.local
+firebase-key.json
+dist/
+*.log
+.DS_Store

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs - regenerated on every build
+dist/
+build/
+.next/
+.firebase/
+frontend/.firebase/
+
+# Local environment — never commit
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Service account keys — private keys must never be in source control
+*-gdrive-*.json
+*-firebase-adminsdk-*.json
+*-service-account*.json
+
+# Development
+npm-debug.log
+yarn-error.log

@@ -3,6 +3,7 @@ import PropTypes from 'prop-types'
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   updateProfile,
 } from 'firebase/auth'
 import Spinner from '@/components/ui/Spinner'
@@ -25,6 +26,7 @@ export default function MemberAuthModal({ onClose, onSuccess }) {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [resetSent, setResetSent] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -60,6 +62,21 @@ export default function MemberAuthModal({ onClose, onSuccess }) {
     }
   }
 
+  async function handleForgotPassword(e) {
+    e.preventDefault()
+    setError('')
+    if (!email.trim()) { setError('Please enter your email address.'); return }
+    setLoading(true)
+    try {
+      await sendPasswordResetEmail(auth, email.trim())
+      setResetSent(true)
+    } catch (err) {
+      setError(normalizeError(err?.code))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 p-4 flex items-center justify-center">
       <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -82,72 +99,122 @@ export default function MemberAuthModal({ onClose, onSuccess }) {
           <div className="grid grid-cols-2 gap-2 mb-4">
             <button
               type="button"
-              onClick={() => { setMode('login'); setError('') }}
+              onClick={() => { setMode('login'); setError(''); setResetSent(false) }}
               className={`py-2 text-xs font-semibold rounded-lg ${mode === 'login' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300'}`}
             >
               Login
             </button>
             <button
               type="button"
-              onClick={() => { setMode('register'); setError('') }}
+              onClick={() => { setMode('register'); setError(''); setResetSent(false) }}
               className={`py-2 text-xs font-semibold rounded-lg ${mode === 'register' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300'}`}
             >
               Register
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-3">
-            {mode === 'register' && (
+          {mode === 'forgot' ? (
+            <form onSubmit={handleForgotPassword} className="space-y-3">
+              <p className="text-xs text-slate-400">Enter your email and we’ll send a password reset link.</p>
               <div>
-                <label className="text-xs text-slate-400 block mb-1">Full Name</label>
+                <label className="text-xs text-slate-400 block mb-1">Email</label>
                 <input
-                  value={fullName}
-                  onChange={e => setFullName(e.target.value)}
-                  maxLength={60}
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  type="email"
+                  autoComplete="email"
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100"
-                  placeholder="Your full name"
+                  placeholder="member@example.com"
                 />
               </div>
-            )}
 
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">Email</label>
-              <input
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                type="email"
-                autoComplete="email"
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100"
-                placeholder="member@example.com"
-              />
-            </div>
+              {error && (
+                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">{error}</p>
+              )}
 
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">Password</label>
-              <input
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                type="password"
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100"
-                placeholder="••••••••"
-              />
-            </div>
+              {resetSent && (
+                <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2">
+                  Reset link sent! Check your inbox.
+                </p>
+              )}
 
-            {error && (
-              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
-                {error}
-              </p>
-            )}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-lg flex items-center justify-center gap-2"
+              >
+                {loading ? <><Spinner /> Sending...</> : 'Send Reset Link'}
+              </button>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-lg flex items-center justify-center gap-2"
-            >
-              {loading ? <><Spinner /> Please wait...</> : mode === 'login' ? 'Login as Member' : 'Register as Member'}
-            </button>
-          </form>
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setError(''); setResetSent(false) }}
+                className="w-full text-xs text-blue-400 hover:text-blue-300 font-medium py-1"
+              >
+                ← Back to Login
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-3">
+              {mode === 'register' && (
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Full Name</label>
+                  <input
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                    maxLength={60}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100"
+                    placeholder="Your full name"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Email</label>
+                <input
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  type="email"
+                  autoComplete="email"
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100"
+                  placeholder="member@example.com"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Password</label>
+                <input
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  type="password"
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-100"
+                  placeholder="••••••••"
+                />
+                {mode === 'login' && (
+                  <button
+                    type="button"
+                    onClick={() => { setMode('forgot'); setError(''); setResetSent(false) }}
+                    className="text-xs text-blue-400 hover:text-blue-300 font-medium mt-1.5"
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+
+              {error && (
+                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg p-2">{error}</p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-lg flex items-center justify-center gap-2"
+              >
+                {loading ? <><Spinner /> Please wait...</> : mode === 'login' ? 'Login as Member' : 'Register as Member'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

@@ -1,21 +1,50 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import PropTypes from 'prop-types'
 import { SEMESTERS } from '@/constants/subjects'
 import Spinner from '@/components/ui/Spinner'
 import { getApiBaseUrl } from '@/services/apiClient'
 
 const MAX_FILE_SIZE = 256 * 1024 * 1024
+const SPEED_WINDOW_MS = 3000 // 3-second sliding window for speed calc
 
 function getFileSizeLabel(bytes) {
-  if (!bytes) return '0 Bytes'
+  if (!bytes) return '0 B'
   const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB']
+  const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`
+  return `${(bytes / Math.pow(k, i)).toFixed(i > 0 ? 2 : 0)} ${sizes[i]}`
 }
 
 function makeFileKey(file) {
   return `${file.name}-${file.size}-${file.lastModified}`
+}
+
+/** Sliding-window speed tracker — keeps last N seconds of samples for accurate speed. */
+class SpeedTracker {
+  constructor(windowMs = SPEED_WINDOW_MS) {
+    this.windowMs = windowMs
+    this.samples = [] // [{ time, bytes }]
+  }
+
+  push(bytes) {
+    const now = performance.now()
+    this.samples.push({ time: now, bytes })
+    // Prune samples outside the window
+    const cutoff = now - this.windowMs
+    while (this.samples.length > 1 && this.samples[0].time < cutoff) {
+      this.samples.shift()
+    }
+  }
+
+  getSpeed() {
+    if (this.samples.length < 2) return 0
+    const first = this.samples[0]
+    const last = this.samples[this.samples.length - 1]
+    const deltaMs = last.time - first.time
+    if (deltaMs <= 0) return 0
+    const deltaBytes = last.bytes - first.bytes
+    return Math.max(0, (deltaBytes / deltaMs) * 1000) // bytes/sec
+  }
 }
 
 function uploadChunkWithProgress({ url, chunk, idToken, onProgress }) {
@@ -26,26 +55,19 @@ function uploadChunkWithProgress({ url, chunk, idToken, onProgress }) {
     xhr.setRequestHeader('Authorization', `Bearer ${idToken}`)
 
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        onProgress?.(event.loaded, event.total)
-      }
+      if (event.lengthComputable) onProgress?.(event.loaded, event.total)
     }
 
     xhr.onerror = () => reject(new Error('Network error during chunk upload'))
 
     xhr.onload = () => {
       let parsed = null
-      try {
-        parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null
-      } catch {
-        parsed = null
-      }
+      try { parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null } catch {}
 
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(parsed || {})
         return
       }
-
       reject(new Error(parsed?.error || `Chunk upload failed (${xhr.status})`))
     }
 
@@ -66,6 +88,7 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
   const [dragActive, setDragActive] = useState(false)
   const [showUploadLockToast, setShowUploadLockToast] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
+  const [bgUploads, setBgUploads] = useState({}) // { batchId: { title, items, done, failedCount } }
 
   useEffect(() => {
     if (!resolvedName) return
@@ -74,23 +97,10 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
 
   const selectedSemester = type !== 'other' ? SEMESTERS.find(s => s.sem === formData.semester) : null
   const subjects = selectedSemester?.subjects || []
-  const progressEntries = useMemo(() => Object.values(fileProgressMap), [fileProgressMap])
-
-  const totalBytes = progressEntries.reduce((sum, item) => sum + (item.totalBytes || 0), 0)
-  const totalUploadedBytes = progressEntries.reduce((sum, item) => sum + (item.uploadedBytes || 0), 0)
-  const totalSpeedBytesPerSecond = progressEntries.reduce((sum, item) => sum + (item.speedBytesPerSecond || 0), 0)
-  const uploadProgress = totalBytes ? Math.min(100, Math.round((totalUploadedBytes / totalBytes) * 100)) : 0
-  const hasActiveUploads = progressEntries.some(item => item.status === 'queued' || item.status === 'uploading')
-  const activeUploadCount = progressEntries.filter(item => item.status === 'queued' || item.status === 'uploading').length
-
-  const submitCandidates = files.filter(item => {
-    const status = fileProgressMap[makeFileKey(item)]?.status
-    return !status || status === 'pending' || status === 'failed'
-  })
 
   const isFormComplete = type === 'other'
-    ? formData.subject && formData.title.trim() && formData.name.trim() && submitCandidates.length > 0
-    : formData.semester && formData.subject && formData.title.trim() && formData.name.trim() && submitCandidates.length > 0
+    ? formData.subject && formData.title.trim() && formData.name.trim() && files.length > 0
+    : formData.semester && formData.subject && formData.title.trim() && formData.name.trim() && files.length > 0
 
   useEffect(() => {
     if (!showUploadLockToast) return
@@ -99,7 +109,7 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
   }, [showUploadLockToast])
 
   function handleAttemptClose() {
-    if (hasActiveUploads) {
+    if (hasBgUploads) {
       setShowUploadLockToast(true)
       return
     }
@@ -187,8 +197,10 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
     setError('')
   }
 
-  async function uploadSingleFile(file, idToken, apiBase, submissionMeta) {
-    const key = makeFileKey(file)
+  async function uploadSingleFile(file, idToken, apiBase, submissionMeta, batchId) {
+    const key = `${batchId}::${makeFileKey(file)}`
+    const speedTracker = new SpeedTracker()
+    speedTracker.push(0)
 
     const requestBody = {
       fileName: file.name,
@@ -203,19 +215,11 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
       fileType: 'pdf',
       displayNameOnSite: submissionMeta.displayNameOnSite,
     }
-
-    if (type === 'practical') {
-      requestBody.unit = submissionMeta.unit || ''
-    } else if (type !== 'other') {
-      requestBody.unit = submissionMeta.unit || ''
-    }
+    if (type !== 'other') requestBody.unit = submissionMeta.unit || ''
 
     const initRes = await fetch(`${apiBase}/upload/init`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
       body: JSON.stringify(requestBody),
     })
 
@@ -226,9 +230,6 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
 
     const { sessionId, chunkSize } = await initRes.json()
     const totalChunks = Math.ceil(file.size / chunkSize)
-    let lastUploadedBytes = 0
-    let lastSpeedTick = performance.now()
-    let smoothedSpeed = 0
     let lastUiTick = 0
 
     for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -242,91 +243,43 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
         idToken,
         onProgress: (loaded) => {
           const uploadedBytes = Math.min(file.size, start + loaded)
+          speedTracker.push(uploadedBytes)
           const now = performance.now()
-
-          const deltaBytes = Math.max(0, uploadedBytes - lastUploadedBytes)
-          const deltaMs = Math.max(1, now - lastSpeedTick)
-          const instantSpeed = (deltaBytes * 1000) / deltaMs
-          smoothedSpeed = smoothedSpeed === 0
-            ? instantSpeed
-            : (smoothedSpeed * 0.75) + (instantSpeed * 0.25)
-
-          lastUploadedBytes = uploadedBytes
-          lastSpeedTick = now
-
-          // Keep UI updates near real-time while avoiding an excessive render storm.
-          if ((now - lastUiTick) < 16 && loaded < chunk.size) return
+          if ((now - lastUiTick) < 50 && loaded < chunk.size) return
           lastUiTick = now
 
-          const progress = Math.min(100, Math.round((uploadedBytes / file.size) * 100))
-          setFileProgressMap(prev => ({
-            ...prev,
-            [key]: {
+          setBgUploads(prev => {
+            const items = { ...prev[batchId]?.items }
+            items[key] = {
+              name: file.name,
               uploadedBytes,
               totalBytes: file.size,
-              progress,
-              speedBytesPerSecond: smoothedSpeed,
+              speed: speedTracker.getSpeed(),
               status: 'uploading',
-            },
-          }))
+            }
+            return { ...prev, [batchId]: { ...prev[batchId], items } }
+          })
         },
       })
-
-      // Ensure final byte/state sync for this chunk completion.
-      const uploadedBytes = end
-      const progress = Math.min(100, Math.round((uploadedBytes / file.size) * 100))
-      setFileProgressMap(prev => ({
-        ...prev,
-        [key]: {
-          uploadedBytes,
-          totalBytes: file.size,
-          progress,
-          speedBytesPerSecond: smoothedSpeed,
-          status: 'uploading',
-        },
-      }))
     }
 
-    setFileProgressMap(prev => ({
-      ...prev,
-      [key]: {
-        uploadedBytes: file.size,
-        totalBytes: file.size,
-        progress: 100,
-        speedBytesPerSecond: prev[key]?.speedBytesPerSecond || 0,
-        status: 'done',
-      },
-    }))
+    setBgUploads(prev => {
+      const items = { ...prev[batchId]?.items }
+      items[key] = { name: file.name, uploadedBytes: file.size, totalBytes: file.size, speed: 0, status: 'done' }
+      return { ...prev, [batchId]: { ...prev[batchId], items } }
+    })
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
 
-    if (!authUser) {
-      setError('Please login as a member to upload files.')
-      return
-    }
-    if (type !== 'other' && !formData.semester) {
-      setError('Semester is required')
-      return
-    }
-    if (!formData.subject) {
-      setError('Subject is required')
-      return
-    }
-    if (!formData.title.trim()) {
-      setError('Title is required')
-      return
-    }
-    if (!formData.name.trim()) {
-      setError('Your name is required')
-      return
-    }
-    if (!submitCandidates.length) {
-      setError('Add new files or retry failed ones before submitting.')
-      return
-    }
+    if (!authUser) { setError('Please login as a member to upload files.'); return }
+    if (type !== 'other' && !formData.semester) { setError('Semester is required'); return }
+    if (!formData.subject) { setError('Subject is required'); return }
+    if (!formData.title.trim()) { setError('Title is required'); return }
+    if (!formData.name.trim()) { setError('Your name is required'); return }
+    if (!files.length) { setError('Add at least one file before submitting.'); return }
 
     const submissionMeta = {
       title: formData.title,
@@ -336,60 +289,49 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
       displayNameOnSite: formData.displayNameOnSite,
     }
 
-    setFileProgressMap(prev => {
-      const next = { ...prev }
-      submitCandidates.forEach(item => {
-        const key = makeFileKey(item)
-        next[key] = {
-          ...(next[key] || {}),
-          uploadedBytes: next[key]?.uploadedBytes || 0,
-          totalBytes: item.size,
-          progress: next[key]?.progress || 0,
-          speedBytesPerSecond: 0,
-          status: 'queued',
-        }
-      })
-      return next
-    })
+    const batchId = `batch-${Date.now()}`
+    const batchFiles = [...files]
 
+    // Initialise background upload entry
+    const items = {}
+    batchFiles.forEach(f => {
+      const key = `${batchId}::${makeFileKey(f)}`
+      items[key] = { name: f.name, uploadedBytes: 0, totalBytes: f.size, speed: 0, status: 'queued' }
+    })
+    setBgUploads(prev => ({ ...prev, [batchId]: { title: submissionMeta.title, items } }))
+
+    // Reset form immediately so user can submit more
+    setFormData(prev => ({ ...prev, title: '', unit: '' }))
+    setFiles([])
+    setFileProgressMap({})
+    setError('')
+
+    // Upload in background
     try {
       const idToken = await authUser.getIdToken()
       const apiBase = getApiBaseUrl()
 
       const results = await Promise.allSettled(
-        submitCandidates.map(item => uploadSingleFile(item, idToken, apiBase, submissionMeta))
+        batchFiles.map(f => uploadSingleFile(f, idToken, apiBase, submissionMeta, batchId))
       )
 
-      const failed = results
-        .map((result, index) => ({ result, index }))
-        .filter(item => item.result.status === 'rejected')
+      const failedCount = results.filter(r => r.status === 'rejected').length
 
-      const failedKeySet = new Set(failed.map(item => makeFileKey(submitCandidates[item.index])))
-
-      setFileProgressMap(prev => {
-        const next = { ...prev }
-        submitCandidates.forEach(item => {
-          const key = makeFileKey(item)
-          if (failedKeySet.has(key)) {
-            next[key] = { ...(next[key] || {}), status: 'failed' }
-          } else {
-            delete next[key]
-          }
-        })
-        return next
+      setBgUploads(prev => {
+        const batch = prev[batchId]
+        if (!batch) return prev
+        return { ...prev, [batchId]: { ...batch, done: true, failedCount } }
       })
 
-      setFiles(prev => prev.filter(item => failedKeySet.has(makeFileKey(item))))
-
-      if (failed.length) {
-        setError(`${failed.length} file(s) failed. Please retry.`)
-        return
+      if (failedCount === 0) {
+        setShowSuccess(true)
       }
-
-      setFormData(prev => ({ ...prev, title: '', unit: '' }))
-      setShowSuccess(true)
     } catch (err) {
-      setError(err.message || 'Upload failed. Please try again.')
+      setBgUploads(prev => {
+        const batch = prev[batchId]
+        if (!batch) return prev
+        return { ...prev, [batchId]: { ...batch, done: true, error: err.message } }
+      })
     }
   }
 
@@ -407,9 +349,26 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
     onClose()
   }
 
+  function dismissBatch(batchId) {
+    setBgUploads(prev => {
+      const next = { ...prev }
+      delete next[batchId]
+      return next
+    })
+  }
+
+  // Derived background upload stats
+  const bgEntries = Object.entries(bgUploads)
+  const bgActiveItems = bgEntries.flatMap(([, b]) => Object.values(b.items)).filter(i => i.status === 'uploading' || i.status === 'queued')
+  const bgTotalBytes = bgEntries.flatMap(([, b]) => Object.values(b.items)).reduce((s, i) => s + (i.totalBytes || 0), 0)
+  const bgUploadedBytes = bgEntries.flatMap(([, b]) => Object.values(b.items)).reduce((s, i) => s + (i.uploadedBytes || 0), 0)
+  const bgTotalSpeed = bgEntries.flatMap(([, b]) => Object.values(b.items)).filter(i => i.status === 'uploading').reduce((s, i) => s + (i.speed || 0), 0)
+  const bgProgress = bgTotalBytes ? Math.min(100, Math.round((bgUploadedBytes / bgTotalBytes) * 100)) : 0
+  const hasBgUploads = bgActiveItems.length > 0
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-3 sm:p-4 animate-fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl sm:rounded-2xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-slide-up-modal">
+      <div className="relative bg-slate-900 border border-slate-800 rounded-xl sm:rounded-2xl w-full max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-slide-up-modal">
         
         {/* Header */}
         <div className="sticky top-0 bg-slate-900 border-b border-slate-800 px-4 sm:px-6 py-4 sm:py-5 flex items-start justify-between">
@@ -428,24 +387,42 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
           </button>
         </div>
 
-        {/* Progress Bar */}
-        {hasActiveUploads && (
+        {/* Background Upload Progress */}
+        {hasBgUploads && (
           <div className="px-4 sm:px-6 py-3 bg-slate-900 border-b border-slate-800 space-y-1.5">
             <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Uploading {activeUploadCount} file(s)</span>
-              <span>{getFileSizeLabel(totalUploadedBytes)} / {getFileSizeLabel(totalBytes)}</span>
+              <span className="flex items-center gap-2">
+                <Spinner className="w-3 h-3" />
+                Uploading {bgActiveItems.length} file(s) in background
+              </span>
+              <span>{getFileSizeLabel(bgUploadedBytes)} / {getFileSizeLabel(bgTotalBytes)}</span>
             </div>
             <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-blue-500 transition-all duration-300"
-                style={{ width: `${uploadProgress}%` }}
+                style={{ width: `${bgProgress}%` }}
               />
             </div>
             <p className="text-[11px] text-slate-500">
-              Overall {uploadProgress}%{totalSpeedBytesPerSecond > 0 ? `  |  ${getFileSizeLabel(Math.round(totalSpeedBytesPerSecond))}/s` : ''}
+              {bgProgress}%{bgTotalSpeed > 0 ? ` · ${getFileSizeLabel(Math.round(bgTotalSpeed))}/s` : ''}
             </p>
           </div>
         )}
+
+        {/* Completed batch notifications */}
+        {bgEntries.filter(([, b]) => b.done).map(([id, batch]) => (
+          <div key={id} className={`px-4 sm:px-6 py-2.5 border-b border-slate-800 flex items-center justify-between text-xs ${
+            batch.failedCount ? 'bg-red-500/10 text-red-300' : 'bg-emerald-500/10 text-emerald-300'
+          }`}>
+            <span>
+              {batch.failedCount
+                ? `"${batch.title}" — ${batch.failedCount} file(s) failed`
+                : `"${batch.title}" — uploaded successfully`
+              }
+            </span>
+            <button onClick={() => dismissBatch(id)} className="text-slate-400 hover:text-slate-200 ml-2">✕</button>
+          </div>
+        ))}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-5">
@@ -660,11 +637,9 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
                       )
                     })}
                   </div>
-                  {!hasActiveUploads && (
-                    <label htmlFor="fileInput" className="text-xs text-blue-400 hover:text-blue-300 font-medium cursor-pointer block text-center">
-                      Add more files
-                    </label>
-                  )}
+                  <label htmlFor="fileInput" className="text-xs text-blue-400 hover:text-blue-300 font-medium cursor-pointer block text-center">
+                    Add more files
+                  </label>
                 </div>
               ) : (
                 <label htmlFor="fileInput" className="cursor-pointer block">
@@ -698,8 +673,7 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
             disabled={!isFormComplete}
             className="flex-1 px-4 py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs sm:text-sm font-semibold transition-colors disabled:opacity-50 flex items-center justify-center gap-2 min-h-10 sm:min-h-11"
           >
-            {hasActiveUploads && <Spinner className="w-3 h-3 sm:w-4 sm:h-4" />}
-            <span>{hasActiveUploads ? 'Submit More' : 'Submit'}</span>
+            <span>Submit{hasBgUploads ? ' More' : ''}</span>
           </button>
         </div>
 
@@ -711,7 +685,7 @@ export default function UploadModal({ onClose, onSuccess, type = 'assignment', a
 
         {/* Success Popup */}
         {showSuccess && (
-          <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm flex flex-col items-center justify-center px-6 z-10 animate-fade-in">
+          <div className="fixed inset-0 bg-slate-900 flex flex-col items-center justify-center px-6 z-[60] animate-fade-in">
             <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mb-5">
               <svg className="w-8 h-8 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />

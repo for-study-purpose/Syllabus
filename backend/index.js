@@ -139,6 +139,25 @@ function parseJsonFromAny(raw, sourceName) {
   )
 }
 
+function normalizeGoogleServiceAccount(raw) {
+  const data = { ...(raw || {}) }
+
+  if (typeof data.private_key === 'string') {
+    // Handle escaped newlines and accidental surrounding quotes from env providers.
+    data.private_key = data.private_key
+      .replace(/^"|"$/g, '')
+      .replace(/^'|'$/g, '')
+      .replace(/\\n/g, '\n')
+      .trim()
+  }
+
+  if (typeof data.client_email === 'string') {
+    data.client_email = data.client_email.trim()
+  }
+
+  return data
+}
+
 function makeServiceAccountAuth() {
   if (!GDRIVE_SERVICE_ACCOUNT_JSON) {
     throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is required for Google Drive access.')
@@ -147,7 +166,9 @@ function makeServiceAccountAuth() {
   if (!raw) {
     throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is empty.')
   }
-  const credentials = parseJsonFromAny(raw, 'GDRIVE_SERVICE_ACCOUNT_JSON')
+  const credentials = normalizeGoogleServiceAccount(
+    parseJsonFromAny(raw, 'GDRIVE_SERVICE_ACCOUNT_JSON')
+  )
   return new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/drive'],

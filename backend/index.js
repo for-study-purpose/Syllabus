@@ -39,9 +39,19 @@ app.use(express.raw({ type: 'application/octet-stream', limit: '256mb' }))
 function normalizeServiceAccount(raw) {
   const data = { ...(raw || {}) }
 
+  // Accept both snake_case and camelCase key names from copied JSON variants.
+  if (!data.private_key && typeof data.privateKey === 'string') {
+    data.private_key = data.privateKey
+  }
+
   // Env-based JSON often stores PEM with escaped newlines; convert them.
   if (typeof data.private_key === 'string') {
-    data.private_key = data.private_key.replace(/\\n/g, '\n').trim()
+    data.private_key = data.private_key
+      .replace(/^"|"$/g, '')
+      .replace(/^'|'$/g, '')
+      .replace(/\\\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .trim()
   }
 
   if (typeof data.client_email === 'string') {
@@ -113,7 +123,17 @@ function makeServiceAccountAuth() {
   if (!raw) {
     throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is empty.')
   }
-  const credentials = JSON.parse(raw)
+  let credentials
+  try {
+    credentials = normalizeServiceAccount(JSON.parse(raw))
+  } catch {
+    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON is not valid JSON.')
+  }
+
+  if (!credentials.private_key || !credentials.client_email) {
+    throw new Error('GDRIVE_SERVICE_ACCOUNT_JSON must include private_key and client_email.')
+  }
+
   return new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/drive'],

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import PropTypes from 'prop-types'
 import { signOut } from 'firebase/auth'
 import { getViewUrl } from '@/services/storage'
@@ -9,8 +9,8 @@ import useAuthUser from '@/hooks/useAuthUser'
 import { apiRequest } from '@/services/apiClient'
 import Layout from '@/components/layout/Layout'
 import PDFCard from '@/components/submissions/PDFCard'
-import UploadModal from '@/components/submissions/UploadModal'
-import MemberAuthModal from '@/components/submissions/MemberAuthModal'
+const UploadModal = lazy(() => import('@/components/submissions/UploadModal'))
+const MemberAuthModal = lazy(() => import('@/components/submissions/MemberAuthModal'))
 import FilterButton from '@/components/ui/FilterButton'
 import EmptyState from '@/components/ui/EmptyState'
 import { auth } from '@/services/firebase'
@@ -281,24 +281,28 @@ export default function SubmissionTypePage({ type, title, label, subtitle }) {
       )}
 
       {showUploadModal && (
-        <UploadModal
-          type={type}
-          authUser={user}
-          memberProfile={memberProfile}
-          onClose={() => setShowUploadModal(false)}
-          onSuccess={() => {
-            setShowUploadModal(false)
-          }}
-        />
+        <Suspense fallback={null}>
+          <UploadModal
+            type={type}
+            authUser={user}
+            memberProfile={memberProfile}
+            onClose={() => setShowUploadModal(false)}
+            onSuccess={() => {
+              setShowUploadModal(false)
+            }}
+          />
+        </Suspense>
       )}
 
       {showAuthModal && (
-        <MemberAuthModal
-          onClose={() => setShowAuthModal(false)}
-          onSuccess={() => {
-            setShowAuthModal(false)
-          }}
-        />
+        <Suspense fallback={null}>
+          <MemberAuthModal
+            onClose={() => setShowAuthModal(false)}
+            onSuccess={() => {
+              setShowAuthModal(false)
+            }}
+          />
+        </Suspense>
       )}
     </Layout>
   )

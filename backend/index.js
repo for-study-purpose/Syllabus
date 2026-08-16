@@ -6,6 +6,7 @@ const cors = require('cors')
 const { initializeApp, cert } = require('firebase-admin/app')
 const { getAuth } = require('firebase-admin/auth')
 const { getDatabase } = require('firebase-admin/database')
+const { MongoClient, ObjectId } = require('mongodb')
 const { google } = require('googleapis')
 
 const app = express()
@@ -68,13 +69,160 @@ initializeApp({
 const adminAuth = getAuth()
 const realtimeDb = getDatabase()
 
+const MONGO_URI = process.env.MONGO_URI || ''
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'syllabus'
+let mongoClient = null
+let mongoDb = null
+
 function nowTs() {
   return Date.now()
 }
 
-function rtdbRef(pathname) {
-  return realtimeDb.ref(pathname)
+async function connectMongo() {
+  if (!MONGO_URI) {
+    throw new Error('MONGO_URI is required to use MongoDB for app data.')
+  }
+
+  if (!mongoClient) {
+    mongoClient = new MongoClient(MONGO_URI)
+    await mongoClient.connect()
+  }
+
+  if (!mongoDb) {
+    mongoDb = mongoClient.db(MONGO_DB_NAME)
+  }
+
+  return mongoDb
 }
+
+async function getMongoCollection(collectionName) {
+  const db = await connectMongo()
+  return db.collection(collectionName)
+}
+
+function normalizeMongoDoc(doc) {
+  if (!doc || typeof doc !== 'object') return doc
+
+  const cloned = { ...doc }
+  if (cloned._id && !cloned.id) {
+    cloned.id = String(cloned._id)
+  }
+  delete cloned._id
+  return cloned
+}
+
+async function mongoFindOne(collectionName, filter = {}) {
+  const collection = await getMongoCollection(collectionName)
+  const doc = await collection.findOne(filter)
+  return doc ? normalizeMongoDoc(doc) : null
+}
+
+async function mongoFindMany(collectionName, filter = {}) {
+  const collection = await getMongoCollection(collectionName)
+  const docs = await collection.find(filter).toArray()
+  return docs.map(normalizeMongoDoc)
+}
+
+async function mongoInsert(collectionName, payload) {
+  const collection = await getMongoCollection(collectionName)
+  const doc = { ...payload, id: payload.id || new ObjectId().toHexString(), createdAt: payload.createdAt || nowTs() }
+  await collection.insertOne(doc)
+  return doc.id
+}
+
+async function mongoUpdateOne(collectionName, filter, update) {
+  const collection = await getMongoCollection(collectionName)
+  await collection.updateOne(filter, { $set: update }, { upsert: true })
+}
+
+async function mongoDeleteOne(collectionName, filter) {
+  const collection = await getMongoCollection(collectionName)
+  await collection.deleteOne(filter)
+}
+
+async function mongoUpsertById(collectionName, id, update) {
+  const collection = await getMongoCollection(collectionName)
+  if (!id) return null
+  await collection.updateOne({ id }, { $set: { ...update, id } }, { upsert: true })
+  return id
+}
+
+function mongoRef(pathname) {
+  const segments = String(pathname || '').split('/').filter(Boolean)
+  if (!segments.length) {
+    throw new Error('Empty Mongo path is not valid.')
+  }
+
+  const collectionName = segments[0]
+  const subId = segments.slice(1).join('/')
+
+  return {
+    async get() {
+      const collection = await getMongoCollection(collectionName)
+      if (!subId) {
+        const docs = await collection.find({}).toArray()
+        const value = {}
+        for (const doc of docs) {
+          const key = String(doc.id || doc._id)
+          value[key] = normalizeMongoDoc(doc)
+        }
+        return {
+          exists: () => Object.keys(value).length > 0,
+          val: () => value,
+        }
+      }
+
+      const doc = await collection.findOne({ id: subId })
+      if (!doc) {
+        return { exists: () => false, val: () => null }
+      }
+
+      return {
+        exists: () => true,
+        val: () => normalizeMongoDoc(doc),
+      }
+    },
+
+    async set(value) {
+      const collection = await getMongoCollection(collectionName)
+      const doc = { ...(value || {}), id: subId, updatedAt: nowTs() }
+      await collection.updateOne({ id: subId }, { $set: doc }, { upsert: true })
+      return doc
+    },
+
+    async update(value) {
+      const collection = await getMongoCollection(collectionName)
+      const existing = await collection.findOne({ id: subId }) || {}
+      const next = { ...existing, ...value, id: subId, updatedAt: nowTs() }
+      await collection.updateOne({ id: subId }, { $set: next }, { upsert: true })
+      return next
+    },
+
+    async remove() {
+      const collection = await getMongoCollection(collectionName)
+      if (!subId) {
+        await collection.deleteMany({})
+      } else {
+        await collection.deleteOne({ id: subId })
+      }
+    },
+
+    push() {
+      const key = new ObjectId().toHexString()
+      return {
+        key,
+        async set(value) {
+          const collection = await getMongoCollection(collectionName)
+          const payload = { ...(value || {}), id: key, createdAt: value?.createdAt || nowTs() }
+          await collection.updateOne({ id: key }, { $set: payload }, { upsert: true })
+          return payload
+        },
+      }
+    },
+  }
+}
+
+const rtdbRef = mongoRef
 
 // ─── Google Drive Setup ─────────────────────────────────────────────────────
 // HYBRID AUTH: OAuth for uploads/deletes (personal Gmail quota),
@@ -167,7 +315,7 @@ async function isAdminUser(uid) {
   }
 
   try {
-    const memberSnap = await realtimeDb.ref(`members/${uid}`).get()
+    const memberSnap = await rtdbRef(`members/${uid}`).get()
     if (!memberSnap.exists()) return false
     return String(memberSnap.val()?.role || '').toLowerCase() === 'admin'
   } catch {
@@ -215,7 +363,7 @@ async function requireMember(req, res) {
 
   try {
     const decoded = await adminAuth.verifyIdToken(idToken)
-    const memberSnap = await realtimeDb.ref(`members/${decoded.uid}`).get()
+    const memberSnap = await rtdbRef(`members/${decoded.uid}`).get()
     if (!memberSnap.exists()) {
       res.status(403).json({ error: 'Member account not found. Please register first.' })
       return null

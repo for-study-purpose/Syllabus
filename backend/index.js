@@ -78,13 +78,39 @@ function nowTs() {
   return Date.now()
 }
 
+function isMongoTopologyClosed() {
+  if (!mongoClient) return true
+
+  const topology = mongoClient.topology
+  if (!topology) return false
+
+  try {
+    if (typeof topology.isDestroyed === 'function' && topology.isDestroyed()) return true
+    if (typeof topology.isConnected === 'function' && !topology.isConnected()) return true
+  } catch {
+    // Ignore topology introspection errors and fall through to a reconnect attempt.
+  }
+
+  try {
+    const state = topology.s && topology.s.state
+    return state === 'closed' || state === 'destroyed'
+  } catch {
+    return false
+  }
+}
+
 async function connectMongo() {
   if (!MONGO_URI) {
     throw new Error('MONGO_URI is required to use MongoDB for app data.')
   }
 
-  if (!mongoClient) {
-    mongoClient = new MongoClient(MONGO_URI)
+  if (!mongoClient || isMongoTopologyClosed()) {
+    mongoClient = null
+    mongoDb = null
+    mongoClient = new MongoClient(MONGO_URI, {
+      serverSelectionTimeoutMS: 15000,
+      maxPoolSize: 10,
+    })
     await mongoClient.connect()
   }
 
